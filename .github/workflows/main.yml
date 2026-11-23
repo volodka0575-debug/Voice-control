@@ -1,0 +1,58 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Авто-распаковка: если в репозитории лежит zip с проектом — распаковываем его сами
+      - name: Найти проект / распаковать zip
+        run: |
+          if [ -f settings.gradle.kts ] || [ -f settings.gradle ]; then
+            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+          else
+            Z=$(find . -maxdepth 2 -iname '*.zip' -not -path './.git/*' | head -n1)
+            if [ -z "$Z" ]; then echo "::error::Не найден ни проект, ни zip-архив"; exit 1; fi
+            echo "Распаковываю $Z"
+            mkdir -p /tmp/proj && unzip -q -o "$Z" -d /tmp/proj
+            S=$(find /tmp/proj -name settings.gradle.kts -o -name settings.gradle | head -n1)
+            echo "PROJECT_DIR=$(dirname "$S")" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Сборка APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Подготовить APK
+        run: |
+          mkdir -p out
+          cp "${{ env.PROJECT_DIR }}"/app/build/outputs/apk/debug/*.apk out/VoiceControl.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoiceControl-apk
+          path: out/VoiceControl.apk
+
+      - name: Релиз со ссылкой на APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Сборка ${{ github.run_number }}
+          files: out/VoiceControl.apk
